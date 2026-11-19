@@ -9,6 +9,11 @@ checked first: read-only calls go straight through, unlisted calls are refused, 
 exactly the approved arguments, once, with its own credentials, and records the decision in a
 tamper-evident audit log. Includes a LangGraph agent that pauses mid-run for the decision.
 
+![A real run: a £250,000 transfer refused by policy, a £4,000 refund refused for breaking the £500 limit, then a LangGraph agent finds a duplicate £40 charge, pauses, the finance lead approves on their phone, the gateway issues the refund once, and the audit chain verifies](docs/demo.gif)
+
+*A real run, recorded live: local Qwen 2.5 7B, a real Telegram approval tapped on a phone, a stub
+payments API. Frames are held so each step can be read; the approver's id is masked.*
+
 > Framed as a forward-deployed engagement for a **fictional** UK lender, "Northgate Lending".
 > The payments and customer systems are stubs. Everything else is real and tested.
 > [Engagement brief](docs/engagement/brief.md) ·
