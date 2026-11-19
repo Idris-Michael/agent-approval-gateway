@@ -1,6 +1,6 @@
 # Gateway image. Two stages: compile TypeScript, then a runtime with no dev tools and no
 # runtime npm dependencies (the gateway uses Node's standard library only, see ADR 5).
-FROM node:24-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.json tsconfig.build.json ./
 RUN npm ci
@@ -8,7 +8,7 @@ COPY src ./src
 COPY examples ./examples
 RUN npx tsc -p tsconfig.build.json
 
-FROM node:24-alpine
+FROM node:26-alpine
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8787 DATA_DIR=/data POLICY_PATH=/app/examples/policy.json
 WORKDIR /app
 COPY --from=build /app/dist ./dist
