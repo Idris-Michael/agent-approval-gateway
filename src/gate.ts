@@ -262,5 +262,25 @@ export function createGate(opts: GateOptions): Gate {
     return run(card, verified.decision, actor);
   }
 
-  return { request, handleTap, list: store.list, get: store.get };
+  // Expiry must not depend on someone tapping: reads close stale cards, so a waiting agent
+  // sees "expired" instead of "pending" forever, and the approver's buttons disappear
+  function expireIfStale(a: Approval): Approval {
+    if (a.status !== "pending" || now() <= a.expiresAt || !store.expire(a.id)) return a;
+    emit({ type: "expired", approvalId: a.id, kind: a.kind, refId: a.refId });
+    void closeCard(a, "Expired, not sent");
+    return { ...a, status: "expired" };
+  }
+
+  return {
+    request,
+    handleTap,
+    list: (status) => {
+      const rows = store.list(status).map(expireIfStale);
+      return status ? rows.filter((r) => r.status === status) : rows;
+    },
+    get: (id) => {
+      const a = store.get(id);
+      return a ? expireIfStale(a) : null;
+    },
+  };
 }

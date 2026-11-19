@@ -262,3 +262,16 @@ test("the audit events pin a hash of the approved arguments", async () => {
   assert.equal(new Set(hashes).size, 1);
   assert.equal(hashes[0], hashArgs({ a: 1, b: 2 })); // key order does not change the hash
 });
+
+test("a card nobody taps still expires when read, so a waiting agent is not left hanging", async () => {
+  const { id } = await card();
+  clock += 72 * 3_600_000 + 1;
+  assert.equal(gate.get(id)?.status, "expired");
+  assert.equal(gate.list("pending").length, 0);
+  assert.match(edits[0] ?? "", /Expired/);
+  assert.equal(events.filter((e) => e.type === "expired").length, 1);
+  assert.equal(gate.get(id)?.status, "expired"); // second read: no duplicate event
+  assert.equal(events.filter((e) => e.type === "expired").length, 1);
+  assert.equal((await tap(approve(id))).status, "already_decided");
+  assert.deepEqual(ran, []);
+});
