@@ -157,6 +157,8 @@ export function createGate(opts: GateOptions): Gate {
   /** Refuses rather than truncating: nobody should approve words they can't see. */
   async function request(input: ApprovalRequest): Promise<Approval> {
     const { expiryMs } = ruleFor(input.kind);
+    const problems = policy?.checkArgs(input.kind, input.args ?? {}) ?? [];
+    if (problems.length) throw new GateError("invalid_request", `arguments rejected: ${problems.join("; ")}`);
     if (input.idempotencyKey) {
       const existing = store.getByIdempotencyKey(input.idempotencyKey);
       if (existing) {

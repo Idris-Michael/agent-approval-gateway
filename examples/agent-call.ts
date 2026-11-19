@@ -1,12 +1,12 @@
 // Plays the agent: asks the gateway whether it may run a tool, then waits for the decision.
-// Usage: ENV_FILE=path/to/.env npx tsx examples/agent-call.ts issue_refund '{"amountGbp":40,"customerId":"C-1042"}' "reason"
+// Usage: ENV_FILE=path/to/.env npx tsx examples/agent-call.ts issue_refund '{"amount_gbp":40,"customer_id":"C-1042","reason_code":"duplicate_charge"}' "reason"
 if (process.env.ENV_FILE) process.loadEnvFile(process.env.ENV_FILE);
 
 const base = process.env.GATEWAY_URL ?? `http://127.0.0.1:${process.env.PORT ?? 8787}`;
 const key = process.env.AGENT_API_KEY;
 if (!key) throw new Error("AGENT_API_KEY is not set");
 
-const [tool = "issue_refund", argsJson = '{"amountGbp":40,"customerId":"C-1042"}', reason] = process.argv.slice(2);
+const [tool = "issue_refund", argsJson = '{"amount_gbp":40,"customer_id":"C-1042","reason_code":"duplicate_charge"}', reason] = process.argv.slice(2);
 const headers = { "content-type": "application/json", authorization: `Bearer ${key}` };
 const out = (line: string): void => { process.stdout.write(`${line}\n`); };
 
@@ -15,8 +15,8 @@ const res = await fetch(`${base}/v1/tool-calls`, {
   headers: { ...headers, "idempotency-key": `demo-${Date.now()}` },
   body: JSON.stringify({ tool, args: JSON.parse(argsJson) as unknown, reason }),
 });
-const body = (await res.json()) as { decision?: string; reason?: string; error?: string; approval?: { id: string } };
-out(`${res.status} ${body.decision ?? body.error}${body.reason ? `: ${body.reason}` : ""}`);
+const body = (await res.json()) as { decision?: string; reason?: string; error?: string; problems?: string[]; approval?: { id: string } };
+out(`${res.status} ${body.decision ?? body.error}${body.reason ? `: ${body.reason}` : ""}${body.problems ? `: ${body.problems.join("; ")}` : ""}`);
 if (res.status !== 202 || !body.approval) process.exit(0);
 
 out(`Waiting for a person to decide on approval ${body.approval.id}...`);

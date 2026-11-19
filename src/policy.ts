@@ -2,6 +2,7 @@
 // Default-deny: a tool that isn't listed is refused, so a new or hallucinated tool name
 // can never slip through. The policy is data, so compliance can review it without reading code.
 import fs from "node:fs";
+import { parseArgSchema, validateArgs, type ArgSchema } from "./argSchema.js";
 
 export type ToolDecision =
   | { action: "allow" }
@@ -11,6 +12,8 @@ export type ToolDecision =
 export interface Policy {
   version: 1;
   decide: (tool: string) => ToolDecision;
+  /** Problems with a call's arguments against the tool's schema. Empty if fine or no schema. */
+  checkArgs: (tool: string, args: Record<string, unknown>) => string[];
   tools: string[];
 }
 
@@ -18,6 +21,7 @@ interface ToolRule {
   requiresApproval: boolean;
   approvers?: string[];
   expiryHours?: number;
+  args?: unknown;
 }
 
 interface PolicyFile {
@@ -68,10 +72,12 @@ export function parsePolicy(raw: unknown, env: NodeJS.ProcessEnv = process.env):
 
   if (!isObject(file.tools) || Object.keys(file.tools).length === 0) throw new Error("policy.tools: must list at least one tool");
   const rules = new Map<string, ToolDecision>();
+  const schemas = new Map<string, ArgSchema>();
   for (const [tool, rule] of Object.entries(file.tools)) {
     const where = `policy.tools.${tool}`;
     if (!TOOL_NAME.test(tool)) throw new Error(`${where}: tool names are lower_snake_case`);
     if (!isObject(rule) || typeof rule.requiresApproval !== "boolean") throw new Error(`${where}: requiresApproval must be true or false`);
+    if (rule.args !== undefined) schemas.set(tool, parseArgSchema(rule.args, `${where}.args`));
     if (!rule.requiresApproval) {
       if (rule.approvers !== undefined) throw new Error(`${where}: approvers set on a tool that needs no approval`);
       rules.set(tool, { action: "allow" });
@@ -91,6 +97,10 @@ export function parsePolicy(raw: unknown, env: NodeJS.ProcessEnv = process.env):
     version: 1,
     tools: [...rules.keys()],
     decide: (tool) => rules.get(tool) ?? { action: "deny", reason: `tool "${tool}" is not in the policy` },
+    checkArgs: (tool, args) => {
+      const schema = schemas.get(tool);
+      return schema ? validateArgs(schema, args) : [];
+    },
   };
 }
 

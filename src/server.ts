@@ -152,6 +152,9 @@ export function createGatewayServer(opts: ServerOptions): http.Server {
       const body = parseToolCall(await readJson(req));
       const decision = opts.policy.decide(body.tool);
       if (decision.action === "deny") return [403, { decision: "deny", reason: decision.reason }];
+      // Checked before any card exists, so nobody is asked to approve a call that can't run as shown
+      const problems = opts.policy.checkArgs(body.tool, body.args);
+      if (problems.length) return [422, { error: "arguments rejected", problems }];
       if (decision.action === "allow") return [200, { decision: "allow" }];
       let text: string;
       try {

@@ -6,9 +6,28 @@
     "ops-lead": ["env:OPS_APPROVER_ID"]
   },
   "tools": {
-    "lookup_customer": { "requiresApproval": false },
+    "lookup_customer": {
+      "requiresApproval": false,
+      "args": { "customer_id": { "type": "string", "maxLength": 20 } }
+    },
     "lookup_transactions": { "requiresApproval": false },
-    "issue_refund": { "requiresApproval": true, "approvers": ["finance-lead"], "expiryHours": 24 },
-    "send_invoice": { "requiresApproval": true, "approvers": ["finance-lead", "ops-lead"] }
+    "issue_refund": {
+      "requiresApproval": true,
+      "approvers": ["finance-lead"],
+      "expiryHours": 24,
+      "args": {
+        "customer_id": { "type": "string", "maxLength": 20 },
+        "amount_gbp": { "type": "number", "min": 0.01, "max": 500 },
+        "reason_code": { "type": "string", "enum": ["duplicate_charge", "goodwill", "error_correction"] }
+      }
+    },
+    "send_invoice": {
+      "requiresApproval": true,
+      "approvers": ["finance-lead", "ops-lead"],
+      "args": {
+        "customer_id": { "type": "string", "maxLength": 20 },
+        "amount_gbp": { "type": "number", "min": 0.01, "max": 50000 }
+      }
+    }
   }
 }
