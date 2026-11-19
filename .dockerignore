@@ -1,0 +1,10 @@
+node_modules
+dist
+python
+docs
+infra
+test
+.git
+*.db
+*.jsonl
+.env*

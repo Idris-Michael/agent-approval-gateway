@@ -9,23 +9,24 @@
   "engines": {
     "node": ">=22.13"
   },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
     }
   },
   "files": [
-    "dist"
+    "dist/src"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
     "demo": "tsx examples/lender-demo.ts",
-    "agent": "tsx examples/agent-call.ts"
+    "agent": "tsx examples/agent-call.ts",
+    "start": "node dist/examples/lender-demo.js"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
