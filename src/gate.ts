@@ -6,6 +6,16 @@ import type { Policy } from "./policy.js";
 import { callbackData, newApprovalId, requireSecret, verifyCallback, type Decision } from "./signing.js";
 import type { Approval, ApprovalStore } from "./store.js";
 
+export type GateErrorCode = "invalid_request" | "conflict" | "delivery_failed";
+
+/** Request errors carry a code, so an HTTP layer can map them without parsing messages. */
+export class GateError extends Error {
+  constructor(readonly code: GateErrorCode, message: string) {
+    super(message);
+    this.name = "GateError";
+  }
+}
+
 /** Receives the approved card, so it runs exactly the arguments the approver saw. */
 export interface ApprovalHandler {
   approve: (card: Approval) => Promise<string>;
@@ -121,8 +131,8 @@ export function createGate(opts: GateOptions): Gate {
   const ruleFor = (kind: string): { approvers: Set<string>; expiryMs: number } => {
     if (!policy) return { approvers: defaultApprovers, expiryMs: defaultExpiryMs };
     const d = policy.decide(kind);
-    if (d.action === "deny") throw new Error(d.reason);
-    if (d.action === "allow") throw new Error(`tool "${kind}" does not need approval; call it directly`);
+    if (d.action === "deny") throw new GateError("invalid_request", d.reason);
+    if (d.action === "allow") throw new GateError("invalid_request", `tool "${kind}" does not need approval; call it directly`);
     return { approvers: new Set(d.approverIds), expiryMs: d.expiryMs };
   };
   const maxChars = opts.maxCardChars ?? DEFAULT_MAX_CARD_CHARS;
@@ -151,13 +161,13 @@ export function createGate(opts: GateOptions): Gate {
       const existing = store.getByIdempotencyKey(input.idempotencyKey);
       if (existing) {
         if (existing.kind !== input.kind || hashArgs(existing.args) !== hashArgs(input.args ?? {})) {
-          throw new Error(`idempotency key "${input.idempotencyKey}" was already used for a different request`);
+          throw new GateError("conflict", `idempotency key "${input.idempotencyKey}" was already used for a different request`);
         }
         return existing;
       }
     }
-    if (!handlers[input.kind]) throw new Error(`no handler registered for kind "${input.kind}"`);
-    if (input.text.length > maxChars) throw new Error(`approval card too long (${input.text.length} chars, max ${maxChars})`);
+    if (!handlers[input.kind]) throw new GateError("invalid_request", `no handler registered for kind "${input.kind}"`);
+    if (input.text.length > maxChars) throw new GateError("invalid_request", `approval card too long (${input.text.length} chars, max ${maxChars})`);
 
     // Row first, then send: a tap can never arrive for a card the store doesn't know
     const createdAt = now();
@@ -176,7 +186,7 @@ export function createGate(opts: GateOptions): Gate {
     } catch (e) {
       store.finish(row.id, "failed", `card not delivered: ${errorMessage(e)}`);
       emit({ type: "send_failed", ...base, detail: errorMessage(e) });
-      throw e;
+      throw new GateError("delivery_failed", `card not delivered: ${errorMessage(e)}`);
     }
   }
 
