@@ -1,0 +1,50 @@
+#!/bin/bash
+# Runs the gateway container under systemd on Amazon Linux 2023. Secrets are read from Secrets
+# Manager with the instance role at every start and written to /run (memory only).
+set -euo pipefail
+
+dnf install -y docker jq
+systemctl enable --now docker
+
+# The data volume is attached after boot; wait for it, format once, mount by label
+dev="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${volume_id_nodash}"
+for _ in $(seq 1 60); do [ -e "$dev" ] && break; sleep 5; done
+[ -e "$dev" ] || { echo "data volume never appeared" >&2; exit 1; }
+blkid "$dev" || mkfs.ext4 -L gatewaydata "$dev"
+mkdir -p /var/lib/gateway
+grep -q gatewaydata /etc/fstab || echo "LABEL=gatewaydata /var/lib/gateway ext4 defaults,nofail 0 2" >> /etc/fstab
+mount -a
+chown 1000:1000 /var/lib/gateway
+
+cat > /usr/local/bin/gateway-secrets <<'SCRIPT'
+#!/bin/sh
+set -eu
+umask 077
+aws secretsmanager get-secret-value --region ${region} --secret-id ${secret_arn} \
+  --query SecretString --output text | jq -r 'to_entries[] | "\(.key)=\(.value)"' > /run/gateway.env
+for key in ${required_keys}; do
+  grep -q "^$key=." /run/gateway.env || { echo "secret is missing $key" >&2; exit 1; }
+done
+SCRIPT
+chmod 0750 /usr/local/bin/gateway-secrets
+
+cat > /etc/systemd/system/approval-gateway.service <<'UNIT'
+[Unit]
+Description=Agent approval gateway
+After=docker.service network-online.target
+Requires=docker.service
+[Service]
+ExecStartPre=/usr/local/bin/gateway-secrets
+ExecStartPre=-/usr/bin/docker rm -f approval-gateway
+ExecStart=/usr/bin/docker run --name approval-gateway --env-file /run/gateway.env \
+  -v /var/lib/gateway:/data -p 8787:8787 --read-only --tmpfs /tmp \
+  --cap-drop ALL --security-opt no-new-privileges ${container_image}
+ExecStopPost=-/usr/bin/shred -u /run/gateway.env
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now approval-gateway.service

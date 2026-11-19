@@ -1,0 +1,51 @@
+#cloud-config
+# Runs the gateway container under systemd. Secrets are read from Key Vault with the VM's
+# managed identity at every start and written to /run (memory only), never to disk or state.
+package_update: true
+packages: [docker.io, jq, curl]
+
+disk_setup:
+  /dev/disk/azure/scsi1/lun0: { table_type: gpt, layout: true, overwrite: false }
+fs_setup:
+  - { device: /dev/disk/azure/scsi1/lun0, partition: 1, filesystem: ext4, label: gatewaydata, overwrite: false }
+mounts:
+  - [LABEL=gatewaydata, /var/lib/gateway, ext4, "defaults,nofail", "0", "2"]
+
+write_files:
+  - path: /usr/local/bin/gateway-secrets
+    permissions: "0750"
+    content: |
+      #!/bin/sh
+      set -eu
+      token=$(curl -sf -H Metadata:true \
+        "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net&client_id=${identity_client_id}" | jq -r .access_token)
+      umask 077
+      : > /run/gateway.env
+      for pair in ${secret_map}; do
+        name=$${pair%%=*}; var=$${pair#*=}
+        value=$(curl -sf -H "Authorization: Bearer $token" "${vault_uri}secrets/$name?api-version=7.4" | jq -r .value)
+        [ -n "$value" ] && [ "$value" != "null" ] || { echo "secret $name is empty or missing" >&2; exit 1; }
+        printf '%s=%s\n' "$var" "$value" >> /run/gateway.env
+      done
+  - path: /etc/systemd/system/approval-gateway.service
+    content: |
+      [Unit]
+      Description=Agent approval gateway
+      After=docker.service network-online.target
+      Requires=docker.service
+      [Service]
+      ExecStartPre=/usr/local/bin/gateway-secrets
+      ExecStartPre=-/usr/bin/docker rm -f approval-gateway
+      ExecStart=/usr/bin/docker run --name approval-gateway --env-file /run/gateway.env \
+        -v /var/lib/gateway:/data -p 8787:8787 --read-only --tmpfs /tmp \
+        --cap-drop ALL --security-opt no-new-privileges ${container_image}
+      ExecStopPost=-/usr/bin/shred -u /run/gateway.env
+      Restart=always
+      RestartSec=10
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - [chown, "1000:1000", /var/lib/gateway]
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, approval-gateway.service]
