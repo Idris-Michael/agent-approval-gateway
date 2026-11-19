@@ -1,0 +1,49 @@
+[project]
+name = "approval-agent"
+version = "0.1.0"
+description = "A LangGraph agent that pauses for human approval through the agent approval gateway before any sensitive action."
+authors = [{ name = "Idris-Michael Bakare" }]
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "langchain-core>=0.3",
+    "langchain-ollama>=0.3",
+    "langgraph>=0.6",
+    "langgraph-checkpoint-sqlite>=2",
+]
+
+[project.scripts]
+approval-agent = "approval_agent.run:main"
+
+[build-system]
+requires = ["uv_build>=0.11.24,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.1",
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.6",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "SIM", "RUF"]
+ignore = ["S101"]  # assert is how pytest checks
+
+[tool.mypy]
+strict = true
+packages = ["approval_agent"]
+
+[[tool.mypy.overrides]]
+module = ["langgraph.*", "langchain_ollama.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=approval_agent --cov-report=term-missing --cov-fail-under=80"
