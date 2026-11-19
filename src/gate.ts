@@ -1,6 +1,7 @@
 // The approval gate. Agents can only raise a card; the action runs when an approver taps
 // Approve. Who may approve is checked by the tapper's own user id, not by which chat the
 // tap came from, because chat membership is easy to widen by accident.
+import type { Policy } from "./policy.js";
 import { callbackData, newApprovalId, requireSecret, verifyCallback, type Decision } from "./signing.js";
 import type { Approval, ApprovalStore } from "./store.js";
 
@@ -56,7 +57,9 @@ export interface Logger {
 export interface GateOptions {
   store: ApprovalStore;
   secret: string | undefined;
-  approverIds: ReadonlyArray<string | number>;
+  /** Per-tool approvers and expiry. When set, it overrides approverIds and expiryMs per card. */
+  policy?: Policy;
+  approverIds?: ReadonlyArray<string | number>;
   transport: ApprovalTransport;
   handlers: Readonly<Record<string, ApprovalHandler>>;
   expiryMs?: number;
@@ -88,10 +91,19 @@ const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : S
 
 export function createGate(opts: GateOptions): Gate {
   const secret = requireSecret(opts.secret);
-  const { store, transport, handlers } = opts;
-  const approvers = new Set(opts.approverIds.map(String));
-  if (approvers.size === 0) throw new Error("at least one approver id is required");
-  const expiryMs = opts.expiryMs ?? DEFAULT_EXPIRY_MS;
+  const { store, transport, handlers, policy } = opts;
+  const defaultApprovers = new Set((opts.approverIds ?? []).map(String));
+  if (!policy && defaultApprovers.size === 0) throw new Error("at least one approver id (or a policy) is required");
+  const defaultExpiryMs = opts.expiryMs ?? DEFAULT_EXPIRY_MS;
+
+  // Who may decide this kind of card, and how long it stays open
+  const ruleFor = (kind: string): { approvers: Set<string>; expiryMs: number } => {
+    if (!policy) return { approvers: defaultApprovers, expiryMs: defaultExpiryMs };
+    const d = policy.decide(kind);
+    if (d.action === "deny") throw new Error(d.reason);
+    if (d.action === "allow") throw new Error(`tool "${kind}" does not need approval; call it directly`);
+    return { approvers: new Set(d.approverIds), expiryMs: d.expiryMs };
+  };
   const maxChars = opts.maxCardChars ?? DEFAULT_MAX_CARD_CHARS;
   const now = opts.now ?? Date.now;
   const log = opts.logger ?? defaultLogger;
@@ -113,6 +125,7 @@ export function createGate(opts: GateOptions): Gate {
 
   /** Refuses rather than truncating: nobody should approve words they can't see. */
   async function request(input: { kind: string; refId: string; text: string }): Promise<Approval> {
+    const { expiryMs } = ruleFor(input.kind);
     if (!handlers[input.kind]) throw new Error(`no handler registered for kind "${input.kind}"`);
     if (input.text.length > maxChars) throw new Error(`approval card too long (${input.text.length} chars, max ${maxChars})`);
 
@@ -160,11 +173,17 @@ export function createGate(opts: GateOptions): Gate {
 
   async function handleTap(tap: Tap, ack?: (message: string) => Promise<void>): Promise<TapResult> {
     const actor = String(tap.fromId);
-    if (!approvers.has(actor)) {
-      log.warn(`refused tap from user ${actor}`);
-      emit({ type: "refused", actor, detail: "not an approver" });
+    const refuse = (detail: string, approvalId?: string): TapResult => {
+      log.warn(`refused tap from user ${actor}: ${detail}`);
+      emit({ type: "refused", actor, approvalId, detail });
       return { status: "not_authorised", message: "Not authorised" };
-    }
+    };
+    // Cheap pre-check before any crypto: is this user an approver for anything at all?
+    const knownApprover = policy
+      ? policy.tools.some((t) => { const d = policy.decide(t); return d.action === "require_approval" && d.approverIds.includes(actor); })
+      : defaultApprovers.has(actor);
+    if (!knownApprover) return refuse("not an approver");
+
     const verified = verifyCallback(secret, tap.data);
     if (!verified) {
       emit({ type: "refused", actor, detail: "invalid or forged button" });
@@ -173,6 +192,13 @@ export function createGate(opts: GateOptions): Gate {
 
     const card = store.get(verified.id);
     if (!card) return { status: "unknown", message: "Unknown card" };
+    let allowed: Set<string>;
+    try {
+      allowed = ruleFor(card.kind).approvers;
+    } catch (e) {
+      return refuse(`policy no longer allows ${card.kind}: ${errorMessage(e)}`, card.id);
+    }
+    if (!allowed.has(actor)) return refuse(`not an approver for ${card.kind}`, card.id);
     if (card.status !== "pending") return { status: "already_decided", message: `Already ${card.status}` };
     if (now() > card.expiresAt) {
       if (store.expire(card.id)) {

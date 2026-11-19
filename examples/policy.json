@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "defaults": { "expiryHours": 72 },
+  "approverGroups": {
+    "finance-lead": ["REPLACE_WITH_APPROVER_USER_ID"],
+    "ops-lead": ["REPLACE_WITH_APPROVER_USER_ID"]
+  },
+  "tools": {
+    "lookup_customer": { "requiresApproval": false },
+    "lookup_transactions": { "requiresApproval": false },
+    "issue_refund": { "requiresApproval": true, "approvers": ["finance-lead"], "expiryHours": 24 },
+    "send_invoice": { "requiresApproval": true, "approvers": ["finance-lead", "ops-lead"] }
+  }
+}
