@@ -1,0 +1,8 @@
+# Changes to what the agent may do, and to the code that enforces it, need the owner's review.
+*                  @Idris-Michael
+/examples/policy.json  @Idris-Michael
+/src/gate.ts       @Idris-Michael
+/src/signing.ts    @Idris-Michael
+/src/policy.ts     @Idris-Michael
+/src/argSchema.ts  @Idris-Michael
+/infra/            @Idris-Michael

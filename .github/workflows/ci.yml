@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Actions are pinned to commit SHAs (tags can be repointed); Dependabot keeps the pins current.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gateway:
+    name: Gateway (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:coverage
+      - run: npm run build
+      - name: No runtime dependencies (ADR 5)
+        run: test "$(node -p "Object.keys(require('./package.json').dependencies ?? {}).length")" = "0"
+
+  agent:
+    name: LangGraph agent (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy
+      - run: uv run pytest
+
+  infra:
+    name: Terraform (${{ matrix.cloud }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cloud: [azure, aws]
+    defaults:
+      run:
+        working-directory: infra/${{ matrix.cloud }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+      - uses: terraform-linters/setup-tflint@90f302c255ef959cbfb4bd10581afecdb7ece3e6 # v4
+      - run: tflint --init
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - run: tflint --format compact
+      - name: Checkov
+        uses: bridgecrewio/checkov-action@b17b606d6ec72bb8ba5721ad5b7e340b80a9fc39 # v12
+        with:
+          directory: infra/${{ matrix.cloud }}
+          framework: terraform
+          quiet: true
+
+  security:
+    name: Secrets, SAST and SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks (full history)
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Semgrep
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src semgrep/semgrep \
+            semgrep scan --config p/default --error --metrics=off --exclude node_modules --exclude python/.venv
+      - name: SBOM (CycloneDX)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          format: cyclonedx-json
+          artifact-name: sbom.cdx.json
+
+  container:
+    name: Container smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: docker build -t agent-approval-gateway:ci .
+      - name: Starts as non-root and answers /healthz
+        run: |
+          docker run -d --name gw -p 127.0.0.1:8787:8787 \
+            -e TELEGRAM_BOT_TOKEN=123456:ci-dummy-token-not-real-xxxxxxxxxxxxxx \
+            -e APPROVER_CHAT_ID=1 -e FINANCE_APPROVER_ID=1 -e OPS_APPROVER_ID=2 \
+            -e APPROVAL_HMAC_SECRET="$(openssl rand -hex 32)" \
+            -e AGENT_API_KEY="agent_$(openssl rand -hex 16)" -e VIEWER_API_KEY="viewer_$(openssl rand -hex 16)" \
+            agent-approval-gateway:ci
+          for _ in $(seq 1 20); do curl -sf http://127.0.0.1:8787/healthz && break; sleep 1; done
+          curl -sf http://127.0.0.1:8787/healthz
+          test "$(docker exec gw id -un)" = "node"
+      - name: Refuses to start without config
+        run: docker run --rm agent-approval-gateway:ci 2>&1 | grep -q "missing environment variables"
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4
+        with:
+          fail-on-severity: high
