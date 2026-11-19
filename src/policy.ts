@@ -41,8 +41,16 @@ function checkExpiry(hours: unknown, where: string): number | undefined {
   return hours;
 }
 
+// "env:FINANCE_APPROVER_ID" reads the id from the environment, so real user ids stay out of git
+function resolveId(id: string, env: NodeJS.ProcessEnv, where: string): string {
+  if (!id.startsWith("env:")) return id;
+  const value = env[id.slice(4)];
+  if (!value) throw new Error(`${where}: environment variable ${id.slice(4)} is not set`);
+  return value;
+}
+
 /** Validates the whole file up front and names every problem's location. Throws on the first one. */
-export function parsePolicy(raw: unknown): Policy {
+export function parsePolicy(raw: unknown, env: NodeJS.ProcessEnv = process.env): Policy {
   if (!isObject(raw)) throw new Error("policy: must be a JSON object");
   if (raw.version !== 1) throw new Error("policy: version must be 1");
   const file = raw as unknown as PolicyFile;
@@ -54,7 +62,7 @@ export function parsePolicy(raw: unknown): Policy {
     if (!isObject(file.approverGroups)) throw new Error("policy.approverGroups: must be an object");
     for (const [name, ids] of Object.entries(file.approverGroups)) {
       if (!isStringArray(ids) || ids.length === 0) throw new Error(`policy.approverGroups.${name}: must be a non-empty list of user ids`);
-      groups.set(name, ids);
+      groups.set(name, ids.map((id) => resolveId(id, env, `policy.approverGroups.${name}`)));
     }
   }
 
@@ -86,7 +94,7 @@ export function parsePolicy(raw: unknown): Policy {
   };
 }
 
-export function loadPolicy(path: string): Policy {
+export function loadPolicy(path: string, env: NodeJS.ProcessEnv = process.env): Policy {
   let text: string;
   try {
     text = fs.readFileSync(path, "utf-8");
@@ -99,5 +107,5 @@ export function loadPolicy(path: string): Policy {
   } catch (e) {
     throw new Error(`policy file ${path} is not valid JSON: ${(e as Error).message}`);
   }
-  return parsePolicy(json);
+  return parsePolicy(json, env);
 }

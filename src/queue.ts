@@ -62,6 +62,7 @@ export interface Queue {
   recoverInterrupted: () => number;
   cancel: (id: number) => boolean;
   get: (id: number) => Task | null;
+  getByIdempotencyKey: (key: string) => Task | null;
   list: (status?: TaskStatus) => Task[];
   processNext: (deps: WorkerDeps) => Promise<boolean>;
   startWorker: (deps: WorkerDeps, pollMs?: number) => () => void;
@@ -117,6 +118,7 @@ export function openQueue(opts: QueueOptions): Queue {
   );
   const byKey = db.prepare("SELECT id FROM tasks WHERE idempotency_key = ?");
   const byId = db.prepare("SELECT * FROM tasks WHERE id = ?");
+  const rowByKey = db.prepare("SELECT * FROM tasks WHERE idempotency_key = ?");
   // One statement picks and claims, so two workers can never take the same task
   const claim = db.prepare(
     `UPDATE tasks SET status = 'in_progress', updated_at = ?
@@ -225,6 +227,10 @@ export function openQueue(opts: QueueOptions): Queue {
     recoverInterrupted: () => Number(recover.run(maxAttempts, maxAttempts, now()).changes),
     cancel: (id) => Number(cancelStmt.run(now(), id).changes) === 1,
     get,
+    getByIdempotencyKey: (key) => {
+      const row = rowByKey.get(key) as Row | undefined;
+      return row ? toTask(row) : null;
+    },
     list: (status) => ((status ? listByStatus.all(status) : listAll.all()) as unknown as Row[]).map(toTask),
     processNext,
     startWorker,

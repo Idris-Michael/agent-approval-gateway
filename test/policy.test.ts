@@ -58,8 +58,16 @@ test("invalid policies fail loudly and say where", () => {
 });
 
 test("the example policy in the repo is valid", () => {
-  const p = loadPolicy(path.join(import.meta.dirname, "..", "examples", "policy.json"));
-  assert.equal(p.decide("issue_refund").action, "require_approval");
+  const env = { FINANCE_APPROVER_ID: "1001", OPS_APPROVER_ID: "2002" };
+  const p = loadPolicy(path.join(import.meta.dirname, "..", "examples", "policy.json"), env);
+  assert.deepEqual(p.decide("issue_refund"), { action: "require_approval", approverIds: ["1001"], expiryMs: 24 * 3_600_000 });
+});
+
+test("approver ids can come from the environment, and a missing one fails loudly", () => {
+  const raw = { version: 1, approverGroups: { finance: ["env:FIN_ID"] }, tools: { issue_refund: { requiresApproval: true, approvers: ["finance"] } } };
+  const d = parsePolicy(raw, { FIN_ID: "4242" }).decide("issue_refund");
+  assert.equal(d.action === "require_approval" && d.approverIds[0], "4242");
+  assert.throws(() => parsePolicy(raw, {}), /FIN_ID is not set/);
 });
 
 test("an unreadable or non-JSON policy file fails loudly", () => {

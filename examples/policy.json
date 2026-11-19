@@ -2,8 +2,8 @@
   "version": 1,
   "defaults": { "expiryHours": 72 },
   "approverGroups": {
-    "finance-lead": ["REPLACE_WITH_APPROVER_USER_ID"],
-    "ops-lead": ["REPLACE_WITH_APPROVER_USER_ID"]
+    "finance-lead": ["env:FINANCE_APPROVER_ID"],
+    "ops-lead": ["env:OPS_APPROVER_ID"]
   },
   "tools": {
     "lookup_customer": { "requiresApproval": false },

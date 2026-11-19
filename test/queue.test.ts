@@ -70,6 +70,8 @@ test("same idempotency key twice creates one task", () => {
   const second = queue.enqueue("send_invoice", { n: 1 }, "invoice-42");
   assert.equal(first, second);
   assert.equal(queue.list().length, 1);
+  assert.equal(queue.getByIdempotencyKey("invoice-42")?.id, first);
+  assert.equal(queue.getByIdempotencyKey("nope"), null);
 });
 
 test("an outage waits without using an attempt, and tells a person only once", async () => {

@@ -23,6 +23,8 @@ export interface ServerOptions {
   policy: Policy;
   apiKeys: ApiKey[];
   verifyAudit?: () => VerifyResult;
+  /** How the approved action went once the queue ran it. */
+  executionFor?: (approvalId: string) => Execution | null;
   rateLimitPerMinute?: number;
   now?: () => number;
   /** One structured line per request. Keys are logged by name, never by value. */
@@ -42,8 +44,13 @@ class HttpError extends Error {
 
 const digest = (s: string): Buffer => crypto.createHash("sha256").update(s).digest();
 
+export interface Execution {
+  status: string;
+  result: string | null;
+}
+
 /** Public shape of an approval. The signed button data never leaves the gateway. */
-export const approvalView = (a: Approval) => ({
+export const approvalView = (a: Approval, execution: Execution | null = null) => ({
   id: a.id,
   tool: a.kind,
   refId: a.refId,
@@ -54,6 +61,7 @@ export const approvalView = (a: Approval) => ({
   decidedBy: a.decidedBy,
   createdAt: new Date(a.createdAt).toISOString(),
   expiresAt: new Date(a.expiresAt).toISOString(),
+  execution,
 });
 
 interface ToolCallBody {
@@ -100,6 +108,7 @@ export function createGatewayServer(opts: ServerOptions): http.Server {
   }
   const keys = opts.apiKeys.map((k) => ({ ...k, hash: digest(k.key) }));
   const now = opts.now ?? Date.now;
+  const view = (a: Approval) => approvalView(a, opts.executionFor?.(a.id) ?? null);
   const limit = opts.rateLimitPerMinute ?? 60;
   const windows = new Map<string, { start: number; count: number }>();
   const log = opts.log ?? ((line) => process.stdout.write(`${JSON.stringify(line)}\n`));
@@ -157,7 +166,7 @@ export function createGatewayServer(opts: ServerOptions): http.Server {
         args: body.args,
         idempotencyKey: idem,
       });
-      return [202, { decision: "pending_approval", approval: approvalView(approval) }];
+      return [202, { decision: "pending_approval", approval: view(approval) }];
     }
 
     const one = /^\/v1\/approvals\/([0-9a-f]{16})$/.exec(pathname);
@@ -165,7 +174,7 @@ export function createGatewayServer(opts: ServerOptions): http.Server {
       ctx.key = authorise(req, ["agent", "viewer"]).name;
       const a = opts.gate.get(one[1]!);
       if (!a) throw new HttpError(404, "approval not found");
-      return [200, approvalView(a)];
+      return [200, view(a)];
     }
 
     if (req.method === "GET" && pathname === "/v1/approvals") {
@@ -173,7 +182,7 @@ export function createGatewayServer(opts: ServerOptions): http.Server {
       const status = url.searchParams.get("status");
       if (status !== null && !STATUSES.has(status)) throw new HttpError(400, "unknown status filter");
       const rows = opts.gate.list((status ?? undefined) as ApprovalStatus | undefined).slice(0, 200);
-      return [200, { approvals: rows.map(approvalView) }];
+      return [200, { approvals: rows.map(view) }];
     }
 
     if (req.method === "GET" && pathname === "/v1/audit") {
