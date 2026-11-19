@@ -55,7 +55,7 @@ The agent never holds the payment credentials: sensitive tools exist in it only 
 | Editing, deleting or reordering any audit line is detected and located | **Tested**, including an edit with a correctly recomputed hash (`test/audit.test.ts`) |
 | End to end on a phone: a local model found a duplicate £40 charge, asked to refund it, waited, and the gateway issued it once | **Seen live** (Telegram, Qwen 2.5 7B on Ollama, stub payments API) |
 
-85 TypeScript tests (`node:test`) and 21 Python tests (pytest, 96% line coverage).
+88 TypeScript tests (`node:test`, 97% line coverage of `src`, including an end-to-end run against a fake Telegram server) and 21 Python tests (pytest, 96% line coverage).
 **Not deployed:** the Terraform in `infra/` is validated offline only.
 
 ## What broke
@@ -78,7 +78,7 @@ Requires Node 22.13+, and for the agent: Python 3.12+, [uv](https://docs.astral.
 
 ```bash
 npm install
-npm test                      # 85 tests, no network
+npm test                      # 88 tests, no network
 
 # Gateway with the lender's stub executors. See docs/engagement/runbook.md for every variable.
 ENV_FILE=/secure/path/gateway.env npm run demo

@@ -25,6 +25,8 @@ export interface GatewayConfig {
   dataDir: string;
   port: number;
   host: string;
+  /** Optional: a self-hosted Telegram Bot API server, or a fake one in tests. */
+  telegramApiBase?: string;
 }
 
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): GatewayConfig {
@@ -44,6 +46,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): GatewayConf
     dataDir: env.DATA_DIR ?? "data",
     port: Number(env.PORT ?? 8787),
     host: env.HOST ?? "127.0.0.1",
+    telegramApiBase: env.TELEGRAM_API_BASE,
   };
   if (missing.length) throw new Error(`missing environment variables: ${missing.join(", ")}`);
   if (!Number.isInteger(config.port) || config.port < 0 || config.port > 65535) throw new Error("PORT must be a port number");
@@ -72,7 +75,7 @@ export async function startGateway(config: GatewayConfig, executors: Record<stri
   const queue = openQueue({ path: path.join(config.dataDir, "queue.db") });
   const auditPath = path.join(config.dataDir, "audit.jsonl");
   const audit = openAuditLog(auditPath);
-  const telegram = createTelegramTransport({ token: config.telegramToken, chatId: config.approverChatId });
+  const telegram = createTelegramTransport({ token: config.telegramToken, chatId: config.approverChatId, apiBase: config.telegramApiBase });
 
   // Approve puts the exact approved arguments on the durable queue; the approval id is the
   // idempotency key, so even a duplicated approval can only ever create one task
@@ -94,6 +97,7 @@ export async function startGateway(config: GatewayConfig, executors: Record<stri
 
   const stopPolling = startTelegramPolling({
     token: config.telegramToken,
+    apiBase: config.telegramApiBase,
     onTap: (tap, ack) => gate.handleTap(tap, ack),
     onError: (m) => logger.error(m),
   });

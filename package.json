@@ -26,7 +26,8 @@
     "test": "tsx --test test/*.test.ts",
     "demo": "tsx examples/lender-demo.ts",
     "agent": "tsx examples/agent-call.ts",
-    "start": "node dist/examples/lender-demo.js"
+    "start": "node dist/examples/lender-demo.js",
+    "test:coverage": "tsx --test --experimental-test-coverage --test-coverage-include='src/**' --test-coverage-lines=80 --test-coverage-branches=70 test/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

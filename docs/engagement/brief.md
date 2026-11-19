@@ -35,7 +35,7 @@ They need the agent to be useful without being trusted with money.
 - This phase is a working pilot on stub payment and customer systems, not production.
 
 ## Outcome (pilot)
-All six criteria are met and covered by automated tests (85 TypeScript, 21 Python). In a live run
+All six criteria are met and covered by automated tests (88 TypeScript, 21 Python). In a live run
 on a phone, a local model found a duplicate £40 charge, asked to refund it, paused until the finance
 lead approved, and the gateway issued it once. See the [README](../../README.md#results) for the
 evidence and [what broke](../../README.md#what-broke) on the way.
