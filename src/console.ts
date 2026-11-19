@@ -21,6 +21,8 @@ export function consolePage(nonce: string): string {
           --accent: #ff6a3d; --ok: #5cc28a; --warn: #e0a83a; --bad: #ff7a70; }
 }
 * { box-sizing: border-box; }
+/* display rules below (form: flex) would otherwise override the hidden attribute */
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--sans); }
 .rail { position: fixed; inset: 0 auto 0 0; width: 6px; background: var(--accent); }
 main { max-width: 1120px; margin: 0 auto; padding: 40px 24px 64px 32px; }

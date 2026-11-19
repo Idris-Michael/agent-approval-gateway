@@ -201,3 +201,8 @@ test("the rate limit returns 429 with Retry-After", async () => {
     await new Promise((r) => limited.close(r));
   }
 });
+
+test("the console hides the key form once logged in (hidden must beat the form's display rule)", async () => {
+  const html = await (await fetch(`${base}/`)).text();
+  assert.match(html, /\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/);
+});
