@@ -1,13 +1,24 @@
 // The approval gate. Agents can only raise a card; the action runs when an approver taps
 // Approve. Who may approve is checked by the tapper's own user id, not by which chat the
 // tap came from, because chat membership is easy to widen by accident.
+import crypto from "node:crypto";
 import type { Policy } from "./policy.js";
 import { callbackData, newApprovalId, requireSecret, verifyCallback, type Decision } from "./signing.js";
 import type { Approval, ApprovalStore } from "./store.js";
 
+/** Receives the approved card, so it runs exactly the arguments the approver saw. */
 export interface ApprovalHandler {
-  approve: (refId: string) => Promise<string>;
-  reject: (refId: string) => Promise<string>;
+  approve: (card: Approval) => Promise<string>;
+  reject: (card: Approval) => Promise<string>;
+}
+
+export interface ApprovalRequest {
+  kind: string;
+  refId: string;
+  text: string;
+  args?: Record<string, unknown>;
+  /** A retried request with the same key returns the original card instead of sending another. */
+  idempotencyKey?: string;
 }
 
 export interface ApprovalCard {
@@ -47,6 +58,8 @@ export interface GateEvent {
   refId?: string;
   actor?: string;
   detail?: string;
+  /** SHA-256 of the approved arguments, so the audit log pins exactly what ran. */
+  argsHash?: string;
 }
 
 export interface Logger {
@@ -71,7 +84,7 @@ export interface GateOptions {
 }
 
 export interface Gate {
-  request: (input: { kind: string; refId: string; text: string }) => Promise<Approval>;
+  request: (input: ApprovalRequest) => Promise<Approval>;
   /** `ack` is called once this tap owns the run, before the handler starts (clears chat spinners). */
   handleTap: (tap: Tap, ack?: (message: string) => Promise<void>) => Promise<TapResult>;
   list: ApprovalStore["list"];
@@ -88,6 +101,14 @@ const defaultLogger: Logger = {
 };
 
 const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+// Sorted keys, so the same arguments always give the same hash
+const canonical = (v: unknown): unknown =>
+  Array.isArray(v) ? v.map(canonical)
+    : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical((v as Record<string, unknown>)[k])]))
+    : v;
+export const hashArgs = (args: Record<string, unknown>): string =>
+  crypto.createHash("sha256").update(JSON.stringify(canonical(args))).digest("hex");
 
 export function createGate(opts: GateOptions): Gate {
   const secret = requireSecret(opts.secret);
@@ -124,15 +145,24 @@ export function createGate(opts: GateOptions): Gate {
   };
 
   /** Refuses rather than truncating: nobody should approve words they can't see. */
-  async function request(input: { kind: string; refId: string; text: string }): Promise<Approval> {
+  async function request(input: ApprovalRequest): Promise<Approval> {
     const { expiryMs } = ruleFor(input.kind);
+    if (input.idempotencyKey) {
+      const existing = store.getByIdempotencyKey(input.idempotencyKey);
+      if (existing) {
+        if (existing.kind !== input.kind || hashArgs(existing.args) !== hashArgs(input.args ?? {})) {
+          throw new Error(`idempotency key "${input.idempotencyKey}" was already used for a different request`);
+        }
+        return existing;
+      }
+    }
     if (!handlers[input.kind]) throw new Error(`no handler registered for kind "${input.kind}"`);
     if (input.text.length > maxChars) throw new Error(`approval card too long (${input.text.length} chars, max ${maxChars})`);
 
     // Row first, then send: a tap can never arrive for a card the store doesn't know
     const createdAt = now();
     const row = store.insert({ ...input, id: newApprovalId(), createdAt, expiresAt: createdAt + expiryMs });
-    const base = { approvalId: row.id, kind: row.kind, refId: row.refId };
+    const base = { approvalId: row.id, kind: row.kind, refId: row.refId, argsHash: hashArgs(row.args) };
     try {
       const messageId = await transport.send({
         id: row.id,
@@ -151,9 +181,9 @@ export function createGate(opts: GateOptions): Gate {
   }
 
   async function run(card: Approval, decision: Decision, actor: string): Promise<TapResult> {
-    const base = { approvalId: card.id, kind: card.kind, refId: card.refId, actor };
+    const base = { approvalId: card.id, kind: card.kind, refId: card.refId, actor, argsHash: hashArgs(card.args) };
     try {
-      const outcome = await handlers[card.kind]![decision](card.refId);
+      const outcome = await handlers[card.kind]![decision](card);
       const status = decision === "approve" ? "done" : "rejected";
       store.finish(card.id, status, outcome);
       emit({ type: status, ...base, detail: outcome });
@@ -214,7 +244,7 @@ export function createGate(opts: GateOptions): Gate {
       const latest = store.get(card.id);
       return { status: "already_decided", message: `Already ${latest?.status ?? "decided"}` };
     }
-    emit({ type: "claimed", approvalId: card.id, kind: card.kind, refId: card.refId, actor, detail: verified.decision });
+    emit({ type: "claimed", approvalId: card.id, kind: card.kind, refId: card.refId, actor, detail: verified.decision, argsHash: hashArgs(card.args) });
     await ack?.(verified.decision === "approve" ? "Working..." : "Rejecting...")
       .catch((e: unknown) => log.error(`ack failed: ${errorMessage(e)}`));
     return run(card, verified.decision, actor);

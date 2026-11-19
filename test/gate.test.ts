@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createGate, type Gate, type GateEvent } from "../src/gate.js";
+import { createGate, hashArgs, type Gate, type GateEvent } from "../src/gate.js";
 import { callbackData } from "../src/signing.js";
 import { openApprovalStore, type ApprovalStore } from "../src/store.js";
 
@@ -39,8 +39,8 @@ function makeGate(s: ApprovalStore, sendFails = false): Gate {
     },
     handlers: {
       issue_refund: {
-        approve: async (ref) => { if (boom) throw new Error("payments API down"); ran.push(`approve:${ref}`); return "Refund issued"; },
-        reject: async (ref) => { ran.push(`reject:${ref}`); return "Refund declined"; },
+        approve: async (c) => { if (boom) throw new Error("payments API down"); ran.push(`approve:${c.refId}`); return "Refund issued"; },
+        reject: async (c) => { ran.push(`reject:${c.refId}`); return "Refund declined"; },
       },
     },
     now: () => clock,
@@ -225,4 +225,40 @@ test("every decision emits an event with who did it, for the audit log", async (
   await tap(approve(id));
   assert.deepEqual(events.map((e) => e.type), ["requested", "refused", "claimed", "done"]);
   assert.equal(events.at(-1)?.actor, APPROVER);
+});
+
+test("the handler receives exactly the arguments stored with the approved card", async () => {
+  let seen: unknown;
+  const g = createGate({
+    store, secret: SECRET, approverIds: [APPROVER], logger: QUIET,
+    transport: { send: async () => "1", edit: async () => {} },
+    handlers: { issue_refund: { approve: async (c) => { seen = c.args; return "ok"; }, reject: async () => "no" } },
+  });
+  const c = await g.request({ kind: "issue_refund", refId: "R-7", text: "Refund £40", args: { amountGbp: 40, customerId: "C-7" } });
+  await g.handleTap({ data: approve(c.id), fromId: APPROVER });
+  assert.deepEqual(seen, { amountGbp: 40, customerId: "C-7" });
+});
+
+test("a retried request with the same idempotency key returns the first card and sends nothing new", async () => {
+  const req = { kind: "issue_refund", refId: "R-8", text: "Refund", args: { amountGbp: 10 }, idempotencyKey: "agent-run-1:step-3" };
+  const first = await gate.request(req);
+  const second = await gate.request(req);
+  assert.equal(second.id, first.id);
+  assert.equal(gate.list().length, 1);
+});
+
+test("reusing an idempotency key for different arguments is refused, not silently merged", async () => {
+  await gate.request({ kind: "issue_refund", refId: "R-9", text: "Refund", args: { amountGbp: 10 }, idempotencyKey: "k1" });
+  await assert.rejects(
+    gate.request({ kind: "issue_refund", refId: "R-9", text: "Refund", args: { amountGbp: 4000 }, idempotencyKey: "k1" }),
+    /already used for a different request/,
+  );
+});
+
+test("the audit events pin a hash of the approved arguments", async () => {
+  const c = await gate.request({ kind: "issue_refund", refId: "R-10", text: "Refund", args: { b: 2, a: 1 } });
+  await tap(approve(c.id));
+  const hashes = events.filter((e) => e.approvalId === c.id).map((e) => e.argsHash);
+  assert.equal(new Set(hashes).size, 1);
+  assert.equal(hashes[0], hashArgs({ a: 1, b: 2 })); // key order does not change the hash
 });

@@ -8,6 +8,9 @@ export interface Approval {
   id: string;
   kind: string;
   refId: string;
+  /** The exact arguments that run if approved. The card is rendered from these. */
+  args: Record<string, unknown>;
+  idempotencyKey: string | null;
   text: string;
   messageId: string | null;
   status: ApprovalStatus;
@@ -21,6 +24,8 @@ export interface NewApproval {
   id: string;
   kind: string;
   refId: string;
+  args?: Record<string, unknown>;
+  idempotencyKey?: string;
   text: string;
   createdAt: number;
   expiresAt: number;
@@ -30,6 +35,8 @@ interface Row {
   id: string;
   kind: string;
   ref_id: string;
+  args: string;
+  idempotency_key: string | null;
   text: string;
   message_id: string | null;
   status: ApprovalStatus;
@@ -44,6 +51,8 @@ CREATE TABLE IF NOT EXISTS approvals (
   id          TEXT PRIMARY KEY,
   kind        TEXT NOT NULL,
   ref_id      TEXT NOT NULL,
+  args        TEXT NOT NULL DEFAULT '{}',
+  idempotency_key TEXT UNIQUE,
   text        TEXT NOT NULL,
   message_id  TEXT,
   status      TEXT NOT NULL CHECK (status IN ('pending','executing','done','rejected','failed','expired')),
@@ -58,6 +67,8 @@ const toApproval = (r: Row): Approval => ({
   id: r.id,
   kind: r.kind,
   refId: r.ref_id,
+  args: JSON.parse(r.args) as Record<string, unknown>,
+  idempotencyKey: r.idempotency_key,
   text: r.text,
   messageId: r.message_id,
   status: r.status,
@@ -70,6 +81,7 @@ const toApproval = (r: Row): Approval => ({
 export interface ApprovalStore {
   insert(a: NewApproval): Approval;
   get(id: string): Approval | null;
+  getByIdempotencyKey(key: string): Approval | null;
   list(status?: ApprovalStatus): Approval[];
   setMessageId(id: string, messageId: string): void;
   /** pending → executing, only if not expired. True means this caller owns the run. */
@@ -88,10 +100,11 @@ export function openApprovalStore(path: string): ApprovalStore {
   db.exec(SCHEMA);
 
   const insertStmt = db.prepare(
-    `INSERT INTO approvals (id, kind, ref_id, text, status, created_at, expires_at)
-     VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
+    `INSERT INTO approvals (id, kind, ref_id, args, idempotency_key, text, status, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
   );
   const getStmt = db.prepare("SELECT * FROM approvals WHERE id = ?");
+  const byKeyStmt = db.prepare("SELECT * FROM approvals WHERE idempotency_key = ?");
   const listAll = db.prepare("SELECT * FROM approvals ORDER BY created_at DESC");
   const listByStatus = db.prepare("SELECT * FROM approvals WHERE status = ? ORDER BY created_at DESC");
   const setMessageStmt = db.prepare("UPDATE approvals SET message_id = ? WHERE id = ?");
@@ -111,12 +124,16 @@ export function openApprovalStore(path: string): ApprovalStore {
 
   return {
     insert(a) {
-      insertStmt.run(a.id, a.kind, a.refId, a.text, a.createdAt, a.expiresAt);
+      insertStmt.run(a.id, a.kind, a.refId, JSON.stringify(a.args ?? {}), a.idempotencyKey ?? null, a.text, a.createdAt, a.expiresAt);
       const row = get(a.id);
       if (!row) throw new Error(`approval ${a.id} was not stored`);
       return row;
     },
     get,
+    getByIdempotencyKey(key) {
+      const row = byKeyStmt.get(key) as Row | undefined;
+      return row ? toApproval(row) : null;
+    },
     list(status) {
       const rows = (status ? listByStatus.all(status) : listAll.all()) as unknown as Row[];
       return rows.map(toApproval);

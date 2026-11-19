@@ -78,7 +78,7 @@ test("with a policy, the gate refuses the wrong approver and unlisted or approva
   const store = openApprovalStore(path.join(dir, "a.db"));
   const secret = "test-secret-that-is-at-least-32-characters";
   const ran: string[] = [];
-  const handler = { approve: async (r: string) => { ran.push(r); return "ok"; }, reject: async () => "no" };
+  const handler = { approve: async (c: { refId: string }) => { ran.push(c.refId); return "ok"; }, reject: async () => "no" };
   try {
     const gate = createGate({
       store, secret, policy: parsePolicy(valid),

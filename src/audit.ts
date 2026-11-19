@@ -24,7 +24,7 @@ export type VerifyResult =
 export const GENESIS_HASH = "0".repeat(64);
 
 // Fixed key order, so the same entry always hashes the same way
-const FIELDS = ["seq", "at", "type", "approvalId", "kind", "refId", "actor", "detail", "prevHash"] as const;
+const FIELDS = ["seq", "at", "type", "approvalId", "kind", "refId", "actor", "detail", "argsHash", "prevHash"] as const;
 
 export function hashEntry(entry: Omit<AuditEntry, "hash">): string {
   const canonical = JSON.stringify(FIELDS.map((f) => entry[f] ?? null));
@@ -74,6 +74,7 @@ export function openAuditLog(path: string): AuditLog {
         refId: event.refId,
         actor: event.actor,
         detail: event.detail,
+        argsHash: event.argsHash,
         prevHash,
       };
       const entry: AuditEntry = { ...base, hash: hashEntry(base) };
