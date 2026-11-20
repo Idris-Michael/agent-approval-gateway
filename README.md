@@ -1,5 +1,7 @@
 # agent-approval-gateway
 
+[![CI](https://github.com/Idris-Michael/agent-approval-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/Idris-Michael/agent-approval-gateway/actions/workflows/ci.yml)
+
 **Let an AI agent ask for anything, but only let it *do* sensitive things after a named person has
 approved the exact request on their phone.**
 
